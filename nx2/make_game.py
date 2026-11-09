@@ -268,7 +268,7 @@ def check_cpu():
     """(linux) The AppImage's Vulkan back end (HOOKSHOT_VK_PREBUILT) is built for x86-64-v3 elsewhere
     (scripts/linux/appimage.sh), while the game follows this PC (nx2/host_cpu.py): on a CPU without AVX2 it would stop at
     its start. Said now, before the game is read, not 40 minutes in (issue 363)"""
-    if not os.environ.get("HOOKSHOT_VK_PREBUILT") or os.environ.get("RX_MARCH"):
+    if not os.environ.get("HOOKSHOT_VK_PREBUILT") or os.environ.get("RX_MARCH") or _toolchain.arch() == "arm64":
         return
     sys.path.insert(0, HERE)
     from host_cpu import host_march
@@ -301,12 +301,17 @@ def visual_studio_environment():
     vswhere = os.path.join(os.environ.get("ProgramFiles(x86)", "C:/Program Files (x86)"), "Microsoft Visual Studio", "Installer", "vswhere.exe")
     if not os.path.exists(vswhere):
         return None
-    r = subprocess.run([vswhere, "-latest", "-prerelease", "-products", "*", "-requires", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+    r = subprocess.run([vswhere, "-latest", "-prerelease", "-products", "*", "-requires", "Microsoft.VisualStudio.Component.VC.Tools.ARM64" if _toolchain.arch() == "arm64" else "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
                         "-property", "installationPath"], capture_output=True, text=True, encoding="utf-8", errors="replace")
     lines = r.stdout.strip().splitlines()
     if not lines:
         return None
-    bat = os.path.join(lines[-1], "VC", "Auxiliary", "Build", "vcvars64.bat")
+    # (ARM64: vcvarsarm64.bat on an ARM64 PC, vcvarsamd64_arm64.bat for a cross build on an x64 one)
+    if _toolchain.arch() == "arm64":
+        vcvars = "vcvarsarm64.bat" if _toolchain.arch(host=True) == "arm64" else "vcvarsamd64_arm64.bat"
+    else:
+        vcvars = "vcvars64.bat"
+    bat = os.path.join(lines[-1], "VC", "Auxiliary", "Build", vcvars)
     if not os.path.exists(bat):
         return None
     r = subprocess.run('"%s" >nul && set' % bat, shell=True, capture_output=True, text=True, encoding="mbcs", errors="replace")
@@ -336,7 +341,7 @@ def windows_kits_environment(base):
     env = dict(base or {})
     get = lambda k: next((env[n] for n in env if n.upper() == k), os.environ.get(k, ""))
     env["INCLUDE"] = ";".join(x for x in [get("INCLUDE")] + [os.path.join(inc, v, d) for d in ("ucrt", "um", "shared", "winrt")] if x)
-    env["LIB"] = ";".join(x for x in [get("LIB")] + [os.path.join(kits, "Lib", v, d, "x64") for d in ("ucrt", "um")] if x)
+    env["LIB"] = ";".join(x for x in [get("LIB")] + [os.path.join(kits, "Lib", v, d, _toolchain.arch()) for d in ("ucrt", "um")] if x)
     print("the Windows SDK %s from %s" % (v, kits), flush=True)
     return env
 
@@ -547,7 +552,7 @@ def check_windows_sdk():
              "Windows 11 SDK, then build again. (%s)" % why)
     if "file not found" in why:
         fail("Visual Studio's C++ tools were not found. In the Visual Studio Installer choose Modify, tick \"Desktop development with C++\" "
-             "and its MSVC x64/x86 build tools, then build again. (%s)" % why)
+             "and its MSVC %s build tools, then build again. (%s)" % ("ARM64" if _toolchain.arch() == "arm64" else "x64/x86", why))
     fail("The compiler could not run a test build: %s" % why)
 
 

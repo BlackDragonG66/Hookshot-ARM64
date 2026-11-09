@@ -59,3 +59,10 @@ the script's existing exclusive interval is active; it is not a focus override.
 
 License: GPL-3.0-or-later, as mkw-recomp: a64-kit's translator is suyu's (GPL-2.0-or-later) and Eden's code is
 GPL-3.0.
+
+## Building for Windows on ARM64
+
+The lifted game and `host/` build natively for ARM64 (`aarch64-w64-mingw32` with llvm-mingw, or `aarch64-pc-windows-msvc`).
+`toolchain.arch()` picks the target from the PC (or `RX_ARCH=arm64|x64` for a cross build); on ARM64 the CPU level is
+`-march=armv8.2-a` (LSE atomics and LDAPR are single instructions, as on the console) and `-mcx16` is dropped. Needs an
+ARM64 build of the CPM cache's FFmpeg and Vulkan headers/loader. `HOS_WATCH` (x86 debug registers) is x64-only.

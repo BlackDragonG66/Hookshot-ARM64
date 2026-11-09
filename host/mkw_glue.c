@@ -2,6 +2,13 @@
    commit (TOTK commits its whole 4 GB window up front; MKW's 512 GB window is only reserved), and stand-ins for the
    hooks of files not taken into host/ (the renderer and display, the profiler, mods, TOTK's own patches). */
 #include "hos.h"
+#if defined(__aarch64__) || defined(_M_ARM64)
+#define CTX_PC(c) ((c).Pc)
+#define HOS_WATCH_OK 0   /* (HOS_WATCH uses x86 debug registers) */
+#else
+#define CTX_PC(c) ((c).Rip)
+#define HOS_WATCH_OK 1
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #define WIN32_LEAN_AND_MEAN
@@ -70,7 +77,7 @@ static uint64_t peek_guest(uint64_t a) {
 
 static LONG WINAPI report_crash(EXCEPTION_POINTERS *info) {
     EXCEPTION_RECORD *rec = info->ExceptionRecord;
-    const uint64_t rip = info->ContextRecord->Rip;
+    const uint64_t rip = CTX_PC(*info->ContextRecord);
     HMODULE mod = NULL;
     char name[MAX_PATH] = "?";
     if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
@@ -87,20 +94,20 @@ static LONG WINAPI report_crash(EXCEPTION_POINTERS *info) {
         CONTEXT ctx = *info->ContextRecord;
         char hb[1024];
         int n = snprintf(hb, sizeof hb, "CRASH: host backtrace:");
-        for (int i = 0; i < 20 && ctx.Rip && n < (int)sizeof hb - 48; i++) {
+        for (int i = 0; i < 20 && CTX_PC(ctx) && n < (int)sizeof hb - 48; i++) {
             HMODULE m = NULL;
             char mn[MAX_PATH] = "?";
             if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                                   (LPCSTR)ctx.Rip, &m))
+                                   (LPCSTR)CTX_PC(ctx), &m))
                 GetModuleFileNameA(m, mn, MAX_PATH);
             const char *mb = strrchr(mn, '\\');
-            n += snprintf(hb + n, sizeof hb - n, " %s+%#llx", mb ? mb + 1 : mn, (unsigned long long)(ctx.Rip - (uint64_t)m));
+            n += snprintf(hb + n, sizeof hb - n, " %s+%#llx", mb ? mb + 1 : mn, (unsigned long long)(CTX_PC(ctx) - (uint64_t)m));
             DWORD64 image = 0;
-            PRUNTIME_FUNCTION f = RtlLookupFunctionEntry(ctx.Rip, &image, NULL);
+            PRUNTIME_FUNCTION f = RtlLookupFunctionEntry(CTX_PC(ctx), &image, NULL);
             if (!f) break;
             void *handler_data;
             DWORD64 frame;
-            RtlVirtualUnwind(UNW_FLAG_NHANDLER, image, ctx.Rip, f, &ctx, &handler_data, &frame, NULL);
+            RtlVirtualUnwind(UNW_FLAG_NHANDLER, image, CTX_PC(ctx), f, &ctx, &handler_data, &frame, NULL);
         }
         hos_log("%s", hb);
     }
@@ -312,10 +319,10 @@ static DWORD WINAPI sample_thread(void *p) {
         char stack_line[1024];
         int stack_len = 0;
         if (got) {
-            for (int depth = 0; depth < 48 && ctx.Rip; depth++) {
+            for (int depth = 0; depth < 48 && CTX_PC(ctx); depth++) {
                 HMODULE m = NULL;
                 GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                                   (LPCSTR)ctx.Rip, &m);
+                                   (LPCSTR)CTX_PC(ctx), &m);
                 int mi = -1;
                 for (int i = 0; i < nmods; i++) if (mods[i] == m) mi = i;
                 if (mi < 0 && nmods < 64) {
@@ -326,20 +333,20 @@ static DWORD WINAPI sample_thread(void *p) {
                     const char *b = strrchr(path, '\\');
                     snprintf(modname[mi], sizeof modname[mi], "%s", b ? b + 1 : path);
                 }
-                const uint64_t key = (uint64_t)(mi < 0 ? 63 : mi) << 56 | (ctx.Rip - (uint64_t)m);
+                const uint64_t key = (uint64_t)(mi < 0 ? 63 : mi) << 56 | (CTX_PC(ctx) - (uint64_t)m);
                 if (stacks && stack_len < (int)sizeof stack_line - 96)
                     stack_len += snprintf(stack_line + stack_len, sizeof stack_line - stack_len, "%s%s+%llx",
                                           depth ? ";" : "", mi < 0 ? "?" : modname[mi],
-                                          (unsigned long long)(ctx.Rip - (uint64_t)m));
+                                          (unsigned long long)(CTX_PC(ctx) - (uint64_t)m));
                 if (depth == 0) keys[0] = key;
                 if (m == exe && !keys[1]) keys[1] = key;
                 if (m == exe && !stacks) break;
                 DWORD64 image = 0;
-                PRUNTIME_FUNCTION f = RtlLookupFunctionEntry(ctx.Rip, &image, NULL);
+                PRUNTIME_FUNCTION f = RtlLookupFunctionEntry(CTX_PC(ctx), &image, NULL);
                 if (!f) break;
                 void *hd;
                 DWORD64 frame;
-                RtlVirtualUnwind(UNW_FLAG_NHANDLER, image, ctx.Rip, f, &ctx, &hd, &frame, NULL);
+                RtlVirtualUnwind(UNW_FLAG_NHANDLER, image, CTX_PC(ctx), f, &ctx, &hd, &frame, NULL);
             }
         }
         ResumeThread(th);
@@ -432,6 +439,7 @@ static DWORD WINAPI thread_times_thread(void *p) {
 /* HOS_WATCH=<file> (diagnostic): when <file> exists (up to 4 guest addresses in hex), CPU data breakpoints on them on
    every guest thread: 4 s on reads and writes, then 4 s on writes; <file>.out gets, by address and the host place of
    the access, how many; then <file> is renamed <file>.done and the next one may come. */
+#if HOS_WATCH_OK
 static uint64_t watch_keys[8192];
 static volatile LONG watch_counts[8192];
 static volatile LONG watch_phase;
@@ -524,6 +532,7 @@ static DWORD WINAPI watch_thread(void *p) {
         hos_log("watch: done");
     }
 }
+#endif
 static DWORD WINAPI sample_all_thread(void *p) {
     const char *path = (const char *)p;
     char go[MAX_PATH];
@@ -586,10 +595,10 @@ static DWORD WINAPI sample_all_thread(void *p) {
             const BOOL got = GetThreadContext(th[i], &ctx);
             char line[1024];
             int len = snprintf(line, sizeof line, "%ld %s|", ms, tn[i]);
-            for (int depth = 0; got && depth < 16 && ctx.Rip && len < (int)sizeof line - 96; depth++) {
+            for (int depth = 0; got && depth < 16 && CTX_PC(ctx) && len < (int)sizeof line - 96; depth++) {
                 HMODULE m = NULL;
                 GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                                   (LPCSTR)ctx.Rip, &m);
+                                   (LPCSTR)CTX_PC(ctx), &m);
                 int mi = -1;
                 for (int k = 0; k < nmods; k++) if (mods[k] == m) mi = k;
                 if (mi < 0 && nmods < 64) {
@@ -601,13 +610,13 @@ static DWORD WINAPI sample_all_thread(void *p) {
                     snprintf(modname[mi], sizeof modname[mi], "%s", b ? b + 1 : mp);
                 }
                 len += snprintf(line + len, sizeof line - len, "%s%s+%llx", depth ? ";" : "", mi < 0 ? "?" : modname[mi],
-                                (unsigned long long)(ctx.Rip - (uint64_t)m));
+                                (unsigned long long)(CTX_PC(ctx) - (uint64_t)m));
                 DWORD64 image = 0;
-                PRUNTIME_FUNCTION f = RtlLookupFunctionEntry(ctx.Rip, &image, NULL);
+                PRUNTIME_FUNCTION f = RtlLookupFunctionEntry(CTX_PC(ctx), &image, NULL);
                 if (!f) break;
                 void *hd;
                 DWORD64 frame;
-                RtlVirtualUnwind(UNW_FLAG_NHANDLER, image, ctx.Rip, f, &ctx, &hd, &frame, NULL);
+                RtlVirtualUnwind(UNW_FLAG_NHANDLER, image, CTX_PC(ctx), f, &ctx, &hd, &frame, NULL);
             }
             ResumeThread(th[i]);
             fprintf(out, "%s\n", line);
@@ -626,7 +635,11 @@ void hos_prof_start(void) {
     const char *all = getenv("HOS_SAMPLE_ALL");
     if (all && *all) CreateThread(NULL, 0, sample_all_thread, (void *)all, 0, NULL);
     const char *watch = getenv("HOS_WATCH");
+#if HOS_WATCH_OK
     if (watch && *watch) CreateThread(NULL, 0, watch_thread, (void *)watch, 0, NULL);
+#else
+    (void)watch;
+#endif
 }
 #endif   /* (linux) host/posix/prof.c */
 void hos_mem_checkpoint(const char *what) { (void)what; }        /* (hos_prof.c: HOS_MEM_TIMELINE) */

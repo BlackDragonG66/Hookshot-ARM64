@@ -606,7 +606,11 @@ BOOL GetLogicalProcessorInformation(SYSTEM_LOGICAL_PROCESSOR_INFORMATION *info, 
 }
 void GetSystemInfo(SYSTEM_INFO *si) {
     memset(si, 0, sizeof *si);
+    #if defined(__aarch64__)
+    si->wProcessorArchitecture = 12;   /* (PROCESSOR_ARCHITECTURE_ARM64) */
+#else
     si->wProcessorArchitecture = 9;   /* (PROCESSOR_ARCHITECTURE_AMD64) */
+#endif
     si->dwPageSize = (DWORD)sysconf(_SC_PAGESIZE);
     si->dwAllocationGranularity = 0x10000;
     si->dwNumberOfProcessors = (DWORD)sysconf(_SC_NPROCESSORS_ONLN);

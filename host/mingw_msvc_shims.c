@@ -29,7 +29,23 @@ void __report_rangecheckfailure(void) { __fastfail(8); }   /* FAST_FAIL_RANGE_CH
 
 /* MSVC's stack probe for frames over a page: the same contract on x64 as MinGW's ___chkstk_ms (RAX = the size, every page
    touched, nothing else changed) */
+#if defined(__aarch64__)
+/* (ARM64: x15 = the size in 16-byte units, every page below sp touched, sp unchanged, x16 and x17 free to use) */
+__asm__(".text\n.globl __chkstk\n__chkstk:\n"
+        "    lsl x16, x15, #4\n"
+        "    mov x17, sp\n"
+        "1:  cmp x16, #4096\n"
+        "    b.lo 2f\n"
+        "    sub x17, x17, #4096\n"
+        "    ldr xzr, [x17]\n"
+        "    sub x16, x16, #4096\n"
+        "    b 1b\n"
+        "2:  sub x17, x17, x16\n"
+        "    ldr xzr, [x17]\n"
+        "    ret\n");
+#else
 __asm__(".text\n.globl __chkstk\n__chkstk:\n    jmp ___chkstk_ms\n");
+#endif
 
 /* the unwind handler of /GS frames: it checks the frame's cookie, then lets the search go on */
 EXCEPTION_DISPOSITION __GSHandlerCheck(PEXCEPTION_RECORD record, void *frame, PCONTEXT context, void *dispatcher) {

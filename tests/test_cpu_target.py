@@ -48,6 +48,11 @@ def march_on_linux(text):
 
 
 class HostMarch(unittest.TestCase):
+    def test_arm64_target(self):
+        with mock.patch.dict(os.environ, {"RX_ARCH": "arm64"}):
+            self.assertEqual(host_cpu.host_march(), "armv8.2-a")
+            self.assertEqual(host_cpu.toolchain.arch(), "arm64")
+
     def test_levels_from_cpuinfo(self):
         self.assertEqual(march_on_linux(cpuinfo(HASWELL)), "x86-64-v3")
         self.assertEqual(march_on_linux(cpuinfo(IVY_BRIDGE)), "x86-64-v2")

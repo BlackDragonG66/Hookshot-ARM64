@@ -1,10 +1,20 @@
-"""The x86-64 level this PC's CPU runs (nx2/build.py's -march; issue 363). The game is built on the PC it runs on, so a
+"""The CPU level this PC's CPU runs (nx2/build.py's -march; issue 363). The game is built on the PC it runs on, so a
 CPU without x86-64-v3's features (AVX2, FMA, BMI2, MOVBE) gets x86-64-v2, or the x86-64 baseline. RX_MARCH, read by
 build.py, still chooses."""
 import os
+import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "third_party", "a64-kit", "tools"))
+import toolchain
+
+# (ARM64: the guest's own ISA, so LSE atomics (CAS, CASP, LDADD...), LDAPR and the rest are single host instructions.
+# Windows on Arm's Snapdragon X and Apple/Neoverse-class cores all have ARMv8.2-A; RX_MARCH overrides)
+ARM64_MARCH = "armv8.2-a"
 
 
 def host_march():
+    if toolchain.arch() == "arm64":
+        return ARM64_MARCH
     want = ("avx2", "fma", "bmi2", "movbe")
     try:
         if os.name == "nt":

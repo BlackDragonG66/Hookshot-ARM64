@@ -14,6 +14,15 @@
 #define HOS_H
 #include "a64.h"
 #include <stdarg.h>
+/* a spin-wait hint: PAUSE on x86-64, YIELD on AArch64 */
+#if defined(__x86_64__) || defined(_M_X64)
+#include <emmintrin.h>
+#define HOS_PAUSE() _mm_pause()
+#elif defined(__aarch64__) || defined(_M_ARM64)
+#define HOS_PAUSE() __asm__ volatile("yield" ::: "memory")
+#else
+#define HOS_PAUSE() ((void)0)
+#endif
 
 #define HLE(sym) void imp_##sym(Ctx *c)
 /* HOS_GAME_VERSION: the game update the address hooks below are for, from the build (build.py reads the main

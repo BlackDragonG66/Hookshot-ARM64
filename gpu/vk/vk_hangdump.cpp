@@ -34,25 +34,36 @@ struct ThreadStack {
 };
 ThreadStack stacks[kMaxThreads];
 
+#if defined(_M_ARM64) || defined(__aarch64__)
+#define HD_PC(c) ((c).Pc)
+#define HD_SP(c) ((c).Sp)
+#define HD_LEAF_RETURN(c) ((c).Pc = (c).Lr)   // (a leaf: the return address is in the link register)
+#else
+#define HD_PC(c) ((c).Rip)
+#define HD_SP(c) ((c).Rsp)
+#define HD_LEAF_RETURN(c) ((c).Rip = *(DWORD64*)(c).Rsp, (c).Rsp += 8)
+#endif
+
 int unwind(HANDLE h, DWORD64* out) {
     CONTEXT ctx{};
     ctx.ContextFlags = CONTEXT_FULL;
     if (!GetThreadContext(h, &ctx)) return 0;
     int n = 0;
-    for (; n < kMaxFrames && ctx.Rip; n++) {
-        out[n] = ctx.Rip;
+    for (; n < kMaxFrames && HD_PC(ctx); n++) {
+        out[n] = HD_PC(ctx);
         DWORD64 image = 0;
-        PRUNTIME_FUNCTION f = RtlLookupFunctionEntry(ctx.Rip, &image, nullptr);
+        PRUNTIME_FUNCTION f = RtlLookupFunctionEntry(HD_PC(ctx), &image, nullptr);
         if (!f) {   // (a leaf: the return address on the top of the stack)
-            if (IsBadReadPtr((void*)ctx.Rsp, 8)) break;
-            ctx.Rip = *(DWORD64*)ctx.Rsp;
-            ctx.Rsp += 8;
+#if !(defined(_M_ARM64) || defined(__aarch64__))
+            if (IsBadReadPtr((void*)HD_SP(ctx), 8)) break;
+#endif
+            HD_LEAF_RETURN(ctx);
         } else {
             void* handler_data = nullptr;
             DWORD64 frame = 0;
-            RtlVirtualUnwind(UNW_FLAG_NHANDLER, image, ctx.Rip, f, &ctx, &handler_data, &frame, nullptr);
+            RtlVirtualUnwind(UNW_FLAG_NHANDLER, image, HD_PC(ctx), f, &ctx, &handler_data, &frame, nullptr);
         }
-        if (!ctx.Rsp) break;
+        if (!HD_SP(ctx)) break;
     }
     return n;
 }

@@ -287,8 +287,7 @@ static void poke_multiwait(void) {
     WakeAllConditionVariable(&mw_cv);
 }
 
-#if (defined(__x86_64__) || defined(_M_X64)) && !defined(__EMSCRIPTEN__)
-#include <emmintrin.h>
+#if !defined(__EMSCRIPTEN__)
 static int64_t spin_ns(void) {
     static int64_t ns = -1;
     if (ns < 0) {
@@ -318,7 +317,7 @@ static void spin_until_set(Obj *o, volatile int *flag) {
                 spin_end(o, misses, 1);
                 return;
             }
-            _mm_pause();
+            HOS_PAUSE();
         }
         if (hos_now_ns() >= end) {
             spin_end(o, misses, 0);
@@ -336,7 +335,7 @@ static void spin_until_free(Obj *o) {
                 spin_end(o, misses, 1);
                 return;
             }
-            _mm_pause();
+            HOS_PAUSE();
         }
         if (hos_now_ns() >= end) {
             spin_end(o, misses, 0);

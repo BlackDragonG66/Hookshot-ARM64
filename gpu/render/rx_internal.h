@@ -34,6 +34,16 @@ bool wgpuDevicePoll(WGPUDevice device, bool wait, const void* submission);   // 
 #include "video_core/textures/texture.h"
 
 #include "rx.h"
+
+// a spin-wait hint and a cycle counter that build on x86-64 and AArch64
+#if defined(__aarch64__) || defined(_M_ARM64)
+static inline void rx_pause() { __asm__ volatile("yield" ::: "memory"); }
+static inline uint64_t rx_cycles() { uint64_t v; __asm__ volatile("mrs %0, cntvct_el0" : "=r"(v)); return v; }
+#else
+#include <intrin.h>
+static inline void rx_pause() { _mm_pause(); }
+static inline uint64_t rx_cycles() { return __rdtsc(); }
+#endif
 #include "rx_nvn.h"
 
 extern "C" {

@@ -1,4 +1,4 @@
-import os, shutil
+import os, platform, shutil
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -11,6 +11,15 @@ def windows():
     """(hookshot) the game is built for Windows: on Windows, or with RX_TARGET=windows on another system (a cross build, with
     llvm-mingw's release for that system in HOOKSHOT_MINGW)"""
     return os.name == "nt" or os.environ.get("RX_TARGET", "").lower() == "windows"
+
+
+def arch(host=False):
+    """(hookshot) "arm64" or "x64": the CPU the game is built for. RX_ARCH=arm64|x64 chooses (a cross build); otherwise this PC's,
+    also when Python itself runs emulated (PROCESSOR_ARCHITEW6432 names the real one). host: for a tool the build itself runs"""
+    if not host and os.environ.get("RX_ARCH"):
+        return "arm64" if os.environ["RX_ARCH"].lower() in ("arm64", "aarch64") else "x64"
+    m = (os.environ.get("PROCESSOR_ARCHITEW6432") or os.environ.get("PROCESSOR_ARCHITECTURE") or platform.machine()).lower()
+    return "arm64" if m in ("arm64", "aarch64") else "x64"
 
 
 def mingw(host=False):
@@ -52,9 +61,12 @@ def lld_link():
 
 
 def native_target(host=False):
+    cpu = "aarch64" if arch(host) == "arm64" else "x86_64"
     if mingw(host):   # (-fms-extensions: __try/__except and __declspec, which clang takes on this target too)
-        return ["--target=x86_64-w64-mingw32", "-fms-extensions", "-D_CRT_SECURE_NO_WARNINGS"]
-    return ["--target=x86_64-pc-windows-msvc", "-fms-extensions", "-D_CRT_SECURE_NO_WARNINGS"] if os.name == "nt" else []
+        return ["--target=%s-w64-mingw32" % cpu, "-fms-extensions", "-D_CRT_SECURE_NO_WARNINGS"]
+    if os.name == "nt":
+        return ["--target=%s-pc-windows-msvc" % cpu, "-fms-extensions", "-D_CRT_SECURE_NO_WARNINGS"]
+    return []
 
 
 def native_link(host=False):
